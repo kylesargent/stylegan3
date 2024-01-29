@@ -193,6 +193,31 @@ class ProgressMonitor:
 
 #----------------------------------------------------------------------------
 
+def hijackable_compute_stats(
+    dataset, opts, detector_url, detector_kwargs, rel_lo=0, rel_hi=1, batch_size=64,
+    batch_gen=None, data_loader_kwargs=None, max_items=None, **stats_kwargs):
+    if data_loader_kwargs is None:
+        data_loader_kwargs = dict(pin_memory=True, num_workers=3, prefetch_factor=2)
+
+    num_items = len(dataset)
+    detector = get_feature_detector(url=detector_url, device=opts.device, num_gpus=opts.num_gpus, rank=opts.rank, verbose=False)
+    stats = FeatureStats(max_items=num_items, **stats_kwargs)
+
+    # Main loop.
+    item_subset = [(i * opts.num_gpus + opts.rank) % num_items for i in range((num_items - 1) // opts.num_gpus + 1)]
+    for images in torch.utils.data.DataLoader(dataset=dataset, sampler=item_subset, batch_size=batch_size, **data_loader_kwargs):
+        # import pdb
+        # pdb.set_trace()
+        images = images.permute((0, 3, 1, 2))
+
+        if images.shape[1] == 1:
+            images = images.repeat([1, 3, 1, 1])
+        features = detector(images.to(opts.device), **detector_kwargs)
+        stats.append_torch(features, num_gpus=opts.num_gpus, rank=opts.rank)
+
+    return stats
+
+
 def compute_feature_stats_for_dataset(opts, detector_url, detector_kwargs, rel_lo=0, rel_hi=1, batch_size=64, data_loader_kwargs=None, max_items=None, **stats_kwargs):
     dataset = dnnlib.util.construct_class_by_name(**opts.dataset_kwargs)
     if data_loader_kwargs is None:
